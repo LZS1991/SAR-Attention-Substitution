@@ -64,9 +64,7 @@ class UpConvBlock(nn.Module):
         assert dcn is None, 'Not implemented yet.'
         assert plugins is None, 'Not implemented yet.'
 
-        # 跳跃连接注意力门控
-        # 适用于 SAR 场景：在 concat 前过滤编码器浅层中的相干斑噪声
-        # 轻量级空间门控：仅 ~9 参数
+        # A lightweight spatial gate (~9 parameters) on the skip connection
         self.skip_gate = SpatialGate(
             skip_channels=skip_channels,
             gate_channels=skip_channels,
@@ -108,8 +106,8 @@ class UpConvBlock(nn.Module):
         """Forward function."""
 
         x = self.upsample(x)
-        # 轻量空间门控：过滤相干斑噪声区域，保留水体边界
-        skip = self.skip_gate(skip, x)  # ← 新增
+        # spatial gating before concatenation
+        skip = self.skip_gate(skip, x)
         out = torch.cat([skip, x], dim=1)
         out = self.conv_block(out)
         return out

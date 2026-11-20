@@ -105,7 +105,7 @@ def plot_confusion_matrix(confusion_matrix,
     cmap = plt.get_cmap(color_theme)
     im = ax.imshow(confusion_matrix, cmap=cmap)
     colorbar = plt.colorbar(mappable=im, ax=ax)
-    colorbar.ax.tick_params(labelsize=20)  # 设置 colorbar 标签的字体大小
+    colorbar.ax.tick_params(labelsize=20)  # font size of the colorbar tick labels
 
     title_font = {'weight': 'bold', 'size': 20}
     ax.set_title(title, fontdict=title_font)

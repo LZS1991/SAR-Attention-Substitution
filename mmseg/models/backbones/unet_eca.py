@@ -66,7 +66,7 @@ class BasicConvBlock(nn.Module):
             c_out = out_channels
 
             if use_dw and (use_depthwise and c_in == c_out and stride == 1 if i > 0 else True):
-                # 深度可分离卷积: DW Conv + PW Conv
+                # depthwise-separable convolution: depthwise + pointwise
                 convs.append(nn.Sequential(
                     # Depthwise
                     ConvModule(
@@ -76,7 +76,7 @@ class BasicConvBlock(nn.Module):
                         stride=stride if i == 0 else 1,
                         dilation=1 if i == 0 else dilation,
                         padding=1 if i == 0 else dilation,
-                        groups=c_in,  # 深度卷积
+                        groups=c_in,  # depthwise
                         conv_cfg=conv_cfg,
                         norm_cfg=norm_cfg,
                         act_cfg=act_cfg),
@@ -184,7 +184,7 @@ class UNetECA(BaseModule):
                  downsamples=(True, True, True, True),
                  enc_dilations=(1, 1, 1, 1, 1),
                  dec_dilations=(1, 1, 1, 1),
-                 enc_use_eca=False,  # ← 新增：编码器ECA开关
+                 enc_use_eca=False,  # switch for encoder-stage ECA
                  use_dw=False,
                  with_cp=False,
                  conv_cfg=None,
@@ -261,7 +261,7 @@ class UNetECA(BaseModule):
         self.decoder = nn.ModuleList()
 
         # ECA attention modules for encoder (one per stage)
-        self.enc_eca = nn.ModuleList() if enc_use_eca else None  # ← 新增
+        self.enc_eca = nn.ModuleList() if enc_use_eca else None
 
         for i in range(num_stages):
             enc_conv_block = []
@@ -270,7 +270,7 @@ class UNetECA(BaseModule):
                     enc_conv_block.append(nn.MaxPool2d(kernel_size=2))
                 upsample = (strides[i] != 1 or downsamples[i - 1])
 
-                # 选择 decoder 卷积类型
+                # decoder convolution type
                 self.decoder.append(
                     UpConvBlock(
                         conv_block=BasicConvBlock,
@@ -304,12 +304,11 @@ class UNetECA(BaseModule):
                     plugins=None,
                     use_depthwise=enc_use_depthwise[i],
                     use_dw=use_dw))
-            # 在编码器每个 stage 后添加 ECA 通道注意力
-            # 适用于 SAR 场景：自适应增强水体响应通道，抑制相干斑噪声通道
+            # ECA channel attention after each encoder stage
             enc_conv_block.append(ECABlock(base_channels * 2**i))
             self.encoder.append(nn.Sequential(*enc_conv_block))
 
-            # ECA: 在每个 encoder stage 输出后添加通道注意力
+            # one ECA module per encoder stage
             if enc_use_eca and self.enc_eca is not None:
                 self.enc_eca.append(
                     ECABlock(channels=base_channels * 2 ** i))
@@ -322,7 +321,7 @@ class UNetECA(BaseModule):
         for i, enc in enumerate(self.encoder):
             x = enc(x)
             if self.enc_eca is not None and i < len(self.enc_eca):
-                x = self.enc_eca[i](x)  # ECA 通道重标定
+                x = self.enc_eca[i](x)  # channel re-calibration
             enc_outs.append(x)
         dec_outs = [x]
         for i in reversed(range(len(self.decoder))):

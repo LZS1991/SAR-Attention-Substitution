@@ -12,30 +12,29 @@ from mmengine.model import BaseModule
 
 
 class ECABlock(BaseModule):
-    """ECA 通道注意力模块.
+    """Efficient Channel Attention (ECA) block.
 
-    与 SE 模块不同，ECA 避免了降维，使用 1D 自适应卷积
-    捕获局部跨通道交互，参数量极小（仅 k 个参数，k 通常为 3~7）.
-
-    适用于 SAR 图像场景：自适应增强水体响应通道、抑制相干斑噪声通道.
+    Unlike squeeze-and-excitation, ECA avoids dimensionality reduction and
+    captures local cross-channel interaction with a 1D adaptive convolution,
+    so it adds only k parameters (k is typically between 3 and 7).
 
     Args:
-        channels (int): 输入通道数.
-        gamma (int): 自适应核大小的 gamma 参数. 默认 2.
-        b (int): 自适应核大小的 b 参数. 默认 1.
-        init_cfg (dict | None): 初始化配置. 默认 None.
+        channels (int): Number of input channels.
+        gamma (int): Gamma parameter of the adaptive kernel size. Default: 2.
+        b (int): b parameter of the adaptive kernel size. Default: 1.
+        init_cfg (dict | None): Initialization config. Default: None.
     """
 
     def __init__(self, channels, gamma=2, b=1, init_cfg=None):
         super().__init__(init_cfg)
-        # 自适应核大小: k = |log2(C)/gamma + b/gamma|, 保证奇数
+        # Adaptive kernel size: k = |log2(C) / gamma + b / gamma|, forced odd
         kernel_size = int(
             abs(
                 (torch.log2(
                      torch.tensor(channels, dtype=torch.float)) / gamma +
                  b / gamma).item()))
         kernel_size = kernel_size if kernel_size % 2 else kernel_size + 1
-        kernel_size = max(kernel_size, 3)  # 最小核大小为3
+        kernel_size = max(kernel_size, 3)  # the kernel is at least 3
 
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Conv1d(
@@ -50,10 +49,10 @@ class ECABlock(BaseModule):
         """Forward function.
 
         Args:
-            x (Tensor): 输入特征图 (B, C, H, W).
+            x (Tensor): Input feature map of shape (B, C, H, W).
 
         Returns:
-            Tensor: 通道注意力加权后的特征图 (B, C, H, W).
+            Tensor: Channel-wise re-weighted feature map (B, C, H, W).
         """
         y = self.avg_pool(x)  # (B, C, 1, 1)
         y = y.squeeze(-1).transpose(-1, -2)  # (B, 1, C)
@@ -65,9 +64,12 @@ class ECABlock(BaseModule):
 class SpatialGate(BaseModule):
     """Ultra-lightweight spatial gating for skip connections.
 
-    1. 将 skip 和 gate 特征分别沿通道维求均值 → (B,1,H,W)（零参数）
-    2. 相加后经 3×3 depthwise conv 平滑（9 参数）
-    3. sigmoid 生成空间注意力图，对 skip 特征逐像素调制
+    1. Average the skip and gate features over the channel axis to obtain
+       (B, 1, H, W) maps, which costs no parameters.
+    2. Sum the two maps and smooth the sum with a 3 x 3 depthwise convolution
+       (9 parameters).
+    3. Apply a sigmoid to form a spatial attention map and modulate the skip
+       features pixel by pixel.
     """
 
     def __init__(self,
@@ -78,40 +80,38 @@ class SpatialGate(BaseModule):
         super().__init__(init_cfg)
         self.use_depthwise_smooth = use_depthwise_smooth
         if use_depthwise_smooth:
-            # 单通道 depthwise 3×3：仅 9 个参数
+            # single-channel 3 x 3 depthwise convolution: 9 parameters
             self.smooth = nn.Conv2d(1, 1, kernel_size=3, padding=1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, skip_feat, gate_feat):
-        # 通道均值 → (B, 1, H, W)，零参数
+        # channel means of shape (B, 1, H, W), no parameters
         skip_spatial = skip_feat.mean(dim=1, keepdim=True)
         gate_spatial = gate_feat.mean(dim=1, keepdim=True)
 
-        # 门控信号调制跳跃特征
+        # the gate signal modulates the skip features
         attention = skip_spatial + gate_spatial
 
         if self.use_depthwise_smooth:
-            attention = self.smooth(attention)  # 9参数平滑
+            attention = self.smooth(attention)  # 9-parameter smoothing
 
         attention = self.sigmoid(attention)
-        return skip_feat * attention  # 空间维逐像素加权
+        return skip_feat * attention  # pixel-wise weighting
 
 
 class SkipAttentionGate(BaseModule):
-    """跳跃连接注意力门控模块.
+    """Attention gate on the skip connection.
 
-    在 concat 之前对编码器跳跃特征施加门控，使用解码器
-    上采样后的特征作为 gating signal，自适应过滤噪声.
-
-    适用于 SAR 场景：编码器浅层特征含大量相干斑噪声，
-    门控机制可抑制噪声区域、增强水体边界区域的特征传递.
+    The gate is applied to the encoder skip features before concatenation,
+    with the upsampled decoder features as the gating signal, so that noise
+    regions are suppressed adaptively.
 
     Args:
-        skip_channels (int): 跳跃连接特征通道数（编码器输出）.
-        gate_channels (int): 门控信号通道数（解码器上采样后）.
-        inter_channels (int | None): 中间层通道数.
-            默认 None，取 skip_channels // 2.
-        init_cfg (dict | None): 初始化配置. 默认 None.
+        skip_channels (int): Number of channels of the skip features.
+        gate_channels (int): Number of channels of the gating signal.
+        inter_channels (int | None): Number of intermediate channels.
+            Default: None, which sets it to skip_channels // 2.
+        init_cfg (dict | None): Initialization config. Default: None.
     """
 
     def __init__(self,
@@ -124,17 +124,17 @@ class SkipAttentionGate(BaseModule):
         if inter_channels == 0:
             inter_channels = 1
 
-        # 对跳跃特征做 1x1 压缩
+        # 1 x 1 compression of the skip features
         self.W_skip = nn.Sequential(
             nn.Conv2d(
                 skip_channels, inter_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(inter_channels))
-        # 对门控信号做 1x1 压缩
+        # 1 x 1 compression of the gating signal
         self.W_gate = nn.Sequential(
             nn.Conv2d(
                 gate_channels, inter_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(inter_channels))
-        # 注意力权重
+        # attention weights
         self.psi = nn.Sequential(
             nn.Conv2d(inter_channels, 1, kernel_size=1, bias=True),
             nn.BatchNorm2d(1), nn.Sigmoid())
@@ -143,25 +143,25 @@ class SkipAttentionGate(BaseModule):
         """Forward function.
 
         Args:
-            skip_feat (Tensor): 编码器跳跃特征 (B, C_skip, H, W).
-            gate_feat (Tensor): 解码器上采样后特征 (B, C_gate, H, W).
+            skip_feat (Tensor): Encoder skip features (B, C_skip, H, W).
+            gate_feat (Tensor): Upsampled decoder features (B, C_gate, H, W).
 
         Returns:
-            Tensor: 门控后的跳跃特征 (B, C_skip, H, W).
+            Tensor: Gated skip features (B, C_skip, H, W).
         """
         w_skip = self.W_skip(skip_feat)
         w_gate = self.W_gate(gate_feat)
-        # gate_feat 与 skip_feat 空间尺寸相同（已上采样）
+        # gate_feat and skip_feat have the same spatial size
         psi = self.psi(nn.ReLU()(w_skip + w_gate))
         return skip_feat * psi
 
 class DSConvBlock(nn.Module):
-    """深度可分离卷积块 — Decoder 可选替换
+    """Depthwise-separable convolution block.
 
-    标准 BasicConvBlock: 2 × (C_in × C_out × 3 × 3) = 18 × C_in × C_out
-    DSConvBlock:         2 × (C_in × 9 + C_in × C_out) ≈ 2/9 × BasicConvBlock
-
-    SAR场景：depthwise捕获空间纹理(相干斑/边界)，pointwise做跨通道混合。
+    A standard BasicConvBlock costs 2 x (C_in x C_out x 3 x 3), that is,
+    18 C_in C_out parameters, whereas this block costs 2 x (9 C_in + C_in C_out),
+    about 2/9 of the standard block. The depthwise convolution captures spatial
+    texture and boundaries, and the pointwise convolution mixes channels.
     """
 
     def __init__(self, in_channels, out_channels, num_convs=2,

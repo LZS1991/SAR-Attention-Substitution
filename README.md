@@ -1,6 +1,5 @@
 # Channel attention and depthwise-separable convolution behave as substitutes in SAR water body segmentation
 
-**A budget-matched U-Net ablation**
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1.0-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![MMSegmentation](https://img.shields.io/badge/MMSegmentation-1.2.2-00b4d8)](https://github.com/open-mmlab/mmsegmentation)
@@ -273,12 +272,12 @@ is the all-on cell.
 ```bibtex
 @article{chen2026substitutes,
   title   = {Channel attention and depthwise-separable convolution behave as substitutes
-             in SAR water body segmentation: a budget-matched U-Net ablation},
+             in a U-Net for SAR water body segmentation},
   author  = {Chen, Jianhong and Liu, Wei and Ye, Zhengmao and Zhu, Qin and
              Huang, Yong and Wu, Xinying and Lu, Wanjie},
   journal = {Manuscript under review},
   year    = {2026},
-  note    = {Code: https://github.com/LZS1991/sar-attention-substitution}
+  note    = {Code: https://github.com/LZS1991/SAR-Attention-Substitution}
 }
 ```
 
